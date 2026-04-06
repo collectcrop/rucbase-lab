@@ -38,7 +38,48 @@ class UpdateExecutor : public AbstractExecutor {
         context_ = context;
     }
     std::unique_ptr<RmRecord> Next() override {
-        
+        for (auto &rid : rids_) {
+            auto rec_ptr = fh_->get_record(rid, context_);
+            char* rec = rec_ptr->data;
+
+            // Delete from index
+            for(size_t i = 0; i < tab_.indexes.size(); ++i) {
+                auto& index = tab_.indexes[i];
+                auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
+                char* key = new char[index.col_tot_len];
+                int offset = 0;
+                for(size_t i = 0; i < index.col_num; ++i) {
+                    memcpy(key + offset, rec + index.cols[i].offset, index.cols[i].len);
+                    offset += index.cols[i].len;
+                }
+                ih->delete_entry(key, context_->txn_);
+            }
+
+            for (auto &set_clause : set_clauses_) {
+                set_clause.lhs.tab_name = tab_name_;
+                auto col_pos = get_col(tab_.cols, set_clause.lhs);
+                auto &col = *col_pos;
+                auto &val = set_clause.rhs;
+                if (col.type != val.type) {
+                    throw IncompatibleTypeError(coltype2str(col.type), coltype2str(val.type));
+                }
+                memcpy(rec + col.offset, val.raw->data, col.len);
+            }
+            fh_->update_record(rid, rec, context_);
+
+            // Insert into index
+            for(size_t i = 0; i < tab_.indexes.size(); ++i) {
+                auto& index = tab_.indexes[i];
+                auto ih = sm_manager_->ihs_.at(sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
+                char* key = new char[index.col_tot_len];
+                int offset = 0;
+                for(size_t i = 0; i < index.col_num; ++i) {
+                    memcpy(key + offset, rec + index.cols[i].offset, index.cols[i].len);
+                    offset += index.cols[i].len;
+                }
+                ih->insert_entry(key, rid, context_->txn_);
+            }
+        }
         return nullptr;
     }
 

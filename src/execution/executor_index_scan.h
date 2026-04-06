@@ -64,6 +64,12 @@ class IndexScanExecutor : public AbstractExecutor {
         fed_conds_ = conds_;
     }
 
+    size_t tupleLen() const override { return len_; }
+    const std::vector<ColMeta> &cols() const override { return cols_; }
+    bool is_end() const override {
+        return rid_.page_no == INVALID_PAGE_ID;
+    }
+
     void beginTuple() override {
         
     }

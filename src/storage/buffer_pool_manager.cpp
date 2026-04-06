@@ -251,7 +251,7 @@ void BufferPoolManager::flush_all_pages(int fd) {
     for (size_t i=0; i<pool_size_; ++i) {
         Page *page = &pages_[i];
         PageId page_id = page->get_page_id();
-        if (page_id.page_no!=INVALID_PAGE_ID&&page->is_dirty()) {
+        if (page_id.page_no!=INVALID_PAGE_ID) {
             flush_page(page_id);
         }
     }

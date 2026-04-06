@@ -42,17 +42,70 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
         fed_conds_ = std::move(conds);
 
     }
+    const std::vector<ColMeta> &cols() const override { return cols_; }
+    bool is_end() const override {
+        return isend;
+    }
+    
+    size_t tupleLen() const override { return len_; }
+
+    void advance_to_next_match() {
+        while (!left_->is_end()) {
+            while (!right_->is_end()) {
+                if (match_conditions(left_->Next(), right_->Next())) {
+                    return;
+                }
+                right_->nextTuple();
+            }
+            left_->nextTuple();
+            if (left_->is_end()) break;
+            right_->beginTuple();
+        }
+        isend = true;
+    }
+
+    bool match_conditions(const std::unique_ptr<RmRecord> &left_record, const std::unique_ptr<RmRecord> &right_record) {
+        for (auto &cond : fed_conds_) {
+            auto left_col_pos = get_col(left_->cols(), cond.lhs_col);
+            const char* left_data = left_record->data + left_col_pos->offset;
+            const char* right_data;
+            int right_col_len = 0;
+            if (cond.is_rhs_val) {
+                right_data = cond.rhs_val.raw->data;
+                right_col_len = (left_col_pos->type == TYPE_STRING) ? cond.rhs_val.str_val.size() : left_col_pos->len;
+            } else {
+                auto right_col_pos = get_col(right_->cols(), cond.is_rhs_val ? TabCol() : cond.rhs_col);
+                right_data = right_record->data + right_col_pos->offset;
+                right_col_len = right_col_pos->len;
+            }
+            
+            if (!compare(left_data, right_data, left_col_pos->type, cond.op, left_col_pos->len, right_col_len)) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     void beginTuple() override {
-
+        left_->beginTuple();
+        if (left_->is_end()) { isend = true; return; }
+        right_->beginTuple();
+        advance_to_next_match();
     }
 
     void nextTuple() override {
-        
+        if (isend) return;
+        right_->nextTuple();
+        advance_to_next_match();
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        return nullptr;
+        if (isend) return nullptr;
+        std::unique_ptr<RmRecord> res = std::make_unique<RmRecord>(len_);
+        memcpy(res->data, left_->Next()->data, left_->tupleLen());
+        memcpy(res->data + left_->tupleLen(), right_->Next()->data, right_->tupleLen());
+        _abstract_rid = left_->rid();
+        return res;
     }
 
     Rid &rid() override { return _abstract_rid; }

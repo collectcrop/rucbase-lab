@@ -44,6 +44,7 @@ struct RmPageHandle {
 class RmFileHandle {      
     friend class RmScan;    
     friend class RmManager;
+    friend class DeleteExecutor;    
 
    private:
     DiskManager *disk_manager_;

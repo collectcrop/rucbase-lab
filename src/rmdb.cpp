@@ -118,7 +118,7 @@ void *client_handler(void *sock_fd) {
         Context *context = new Context(lock_manager.get(), log_manager.get(), nullptr, data_send, &offset);
         // Lab 3 need to remove transaction part
         // Lab 4 need to restart transaction
-        // SetTransaction(&txn_id, context);
+        SetTransaction(&txn_id, context);
 
         // 用于判断是否已经调用了yy_delete_buffer来删除buf
         bool finish_analyze = false;

@@ -144,8 +144,10 @@ void DiskManager::destroy_file(const std::string &path) {
     // Todo:
     // 调用unlink()函数
     // 注意不能删除未关闭的文件
+    
     if (path2fd_.count(path)) {
         throw FileNotClosedError(path);
+        // close_file(path2fd_[path]);
     }
     int ret = unlink(path.c_str());
     if (ret==-1) {

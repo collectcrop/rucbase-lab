@@ -26,6 +26,20 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
     // 2. 如果为空指针，创建新事务
     // 3. 把开始事务加入到全局事务表中
     // 4. 返回当前事务指针
+    std::scoped_lock<std::mutex> lock(latch_);
+    if(txn == nullptr) {
+        txn_id_t txn_id = next_txn_id_++;
+        Transaction* new_txn = new Transaction(txn_id);
+        new_txn->set_start_ts(next_timestamp_++);
+        TransactionManager::txn_map[txn_id] = new_txn;
+        log_manager->add_log_to_buffer(new BeginLogRecord(txn_id));
+        return new_txn;
+    } else {
+        assert(TransactionManager::txn_map.find(txn->get_transaction_id()) == TransactionManager::txn_map.end());
+        TransactionManager::txn_map[txn->get_transaction_id()] = txn;
+        log_manager->add_log_to_buffer(new BeginLogRecord(txn->get_transaction_id()));
+        return txn;
+    }
     
     return nullptr;
 }
@@ -38,11 +52,20 @@ Transaction * TransactionManager::begin(Transaction* txn, LogManager* log_manage
 void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
     // Todo:
     // 1. 如果存在未提交的写操作，提交所有的写操作
-    // 2. 释放所有锁
-    // 3. 释放事务相关资源，eg.锁集
-    // 4. 把事务日志刷入磁盘中
-    // 5. 更新事务状态
+    log_manager->add_log_to_buffer(new CommitLogRecord(txn->get_transaction_id()));
 
+    // 4. 把事务日志刷入磁盘中
+    log_manager->flush_log_to_disk();
+
+    // 5. 更新事务状态
+    txn->set_state(TransactionState::COMMITTED);
+    // 2. 释放所有锁
+    for (auto& lock : *(txn->get_lock_set())) {
+        assert(lock_manager_->unlock(txn,lock));
+    }
+
+    // 3. 释放事务相关资源，eg.锁集
+    txn->get_lock_set()->clear();
 }
 
 /**
@@ -53,9 +76,38 @@ void TransactionManager::commit(Transaction* txn, LogManager* log_manager) {
 void TransactionManager::abort(Transaction * txn, LogManager *log_manager) {
     // Todo:
     // 1. 回滚所有写操作
-    // 2. 释放所有锁
-    // 3. 清空事务相关资源，eg.锁集
+    for (auto it = txn->get_write_set()->rbegin(); it != txn->get_write_set()->rend(); ++it) {
+        WriteRecord *write_record = *it;
+        RmFileHandle *file_handle = sm_manager_->fhs_[write_record->GetTableName()].get();
+        switch (write_record->GetWriteType()) {
+            case WType::INSERT_TUPLE: {
+                file_handle->delete_record(write_record->GetRid(), nullptr);
+                break;
+            }
+            case WType::DELETE_TUPLE: {
+                file_handle->insert_record(write_record->GetRid(), write_record->GetRecord().data);
+                break;
+            }
+            case WType::UPDATE_TUPLE: {
+                file_handle->update_record(write_record->GetRid(), write_record->GetRecord().data, nullptr);
+                break;
+            }
+             default:
+                throw InternalError("Unexpected write type");
+                break; 
+         }
+    }
+    log_manager->add_log_to_buffer(new AbortLogRecord(txn->get_transaction_id()));
     // 4. 把事务日志刷入磁盘中
+    log_manager->flush_log_to_disk();
     // 5. 更新事务状态
-    
+    txn->set_state(TransactionState::ABORTED);
+
+    // 2. 释放所有锁
+    for (auto& lock : *(txn->get_lock_set())) {
+        assert(lock_manager_->unlock(txn,lock));
+    }
+    // 3. 清空事务相关资源，eg.锁集
+    txn->get_lock_set()->clear();
+
 }

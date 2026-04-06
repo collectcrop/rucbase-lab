@@ -53,4 +53,40 @@ class AbstractExecutor {
         }
         return pos;
     }
+
+    bool compare_by_op(int cmp, CompOp op) {
+        switch (op) {
+            case OP_EQ: return cmp == 0;
+            case OP_NE: return cmp != 0;
+            case OP_LT: return cmp < 0;
+            case OP_GT: return cmp > 0;
+            case OP_LE: return cmp <= 0;
+            case OP_GE: return cmp >= 0;
+        }
+        return false;
+    }
+
+    bool compare(const char *lhs, const char *rhs, ColType type, CompOp op, int llen = 0, int rlen = 0) {
+        int cmp = 0;
+        switch (type) {
+            case ColType::TYPE_INT:
+                cmp = *reinterpret_cast<const int *>(lhs) - *reinterpret_cast<const int *>(rhs);
+                break;
+            case ColType::TYPE_FLOAT:
+                cmp = *reinterpret_cast<const float *>(lhs) - *reinterpret_cast<const float *>(rhs);
+                break;
+            case ColType::TYPE_STRING:
+                if (llen <= 0 || rlen <= 0) {
+                    throw InternalError("String comparison length must be positive");
+                }
+                if (llen != rlen) {
+                    return false;
+                }
+                cmp = memcmp(lhs, rhs, llen);
+                break;
+            default:
+                throw InternalError("Unexpected data type");
+        }
+        return compare_by_op(cmp, op);
+    }
 };

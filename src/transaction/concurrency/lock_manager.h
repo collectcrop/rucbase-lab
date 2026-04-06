@@ -40,6 +40,9 @@ class LockManager {
         std::list<LockRequest> request_queue_;  // 加锁队列
         std::condition_variable cv_;            // 条件变量，用于唤醒正在等待加锁的申请，在no-wait策略下无需使用
         GroupLockMode group_lock_mode_ = GroupLockMode::NON_LOCK;   // 加锁队列的锁模式
+        bool upgrading_ = false;                // 当前加锁队列中是否存在一个申请正在等待升级
+        int shared_lock_num_ = 0;               // 当前加锁队列中共享锁的数量
+        int IX_lock_num_ = 0;                   // 当前加锁队列中意向排他锁的数量
     };
 
 public:
@@ -47,9 +50,23 @@ public:
 
     ~LockManager() {}
 
+    bool check_conflict(LockMode aim_mode, LockMode req_mode);
+
+    bool deadlock_prevention_check(LockRequestQueue *request_queue, Transaction *txn, LockMode aim_mode);
+
     bool lock_shared_on_record(Transaction* txn, const Rid& rid, int tab_fd);
 
     bool lock_exclusive_on_record(Transaction* txn, const Rid& rid, int tab_fd);
+
+    bool lock_upgrade_on_record(Transaction* txn, LockDataId lock_data_id);
+
+    bool lock_upgrade_to_IX_on_table(Transaction* txn, LockDataId lock_data_id);
+
+    bool lock_upgrade_to_shared_on_table(Transaction* txn, LockDataId lock_data_id);
+
+    bool lock_upgrade_to_SIX_on_table(Transaction* txn, LockDataId lock_data_id);
+
+    bool lock_upgrade_to_exclusive_on_table(Transaction* txn, LockDataId lock_data_id);
 
     bool lock_shared_on_table(Transaction* txn, int tab_fd);
 
@@ -58,6 +75,8 @@ public:
     bool lock_IS_on_table(Transaction* txn, int tab_fd);
 
     bool lock_IX_on_table(Transaction* txn, int tab_fd);
+
+    void update_group_lock_mode(LockRequestQueue* request_queue);
 
     bool unlock(Transaction* txn, LockDataId lock_data_id);
 

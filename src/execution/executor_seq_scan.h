@@ -45,12 +45,29 @@ class SeqScanExecutor : public AbstractExecutor {
         fed_conds_ = conds_;
     }
 
+    const std::vector<ColMeta> &cols() const override { return cols_; }
+    bool is_end() const override {
+        return rid_.page_no == INVALID_PAGE_ID;
+    }
+    size_t tupleLen() const override { return len_; }
+    
     /**
      * @brief 构建表迭代器scan_,并开始迭代扫描,直到扫描到第一个满足谓词条件的元组停止,并赋值给rid_
      *
      */
     void beginTuple() override {
-        
+        scan_ = std::make_unique<RmScan>(fh_);
+        while (!scan_->is_end()) {
+            rid_ = scan_->rid();
+
+            auto rec = fh_->get_record(rid_, context_);
+
+            if (eval_conds(rec.get())) {
+                return;
+            }
+            scan_->next();
+        }
+        rid_ = {-1, -1};
     }
 
     /**
@@ -58,7 +75,17 @@ class SeqScanExecutor : public AbstractExecutor {
      *
      */
     void nextTuple() override {
-        
+        if (!scan_) return;
+        scan_->next();
+        while (!scan_->is_end()) {
+            rid_ = scan_->rid();
+            auto rec = fh_->get_record(rid_, context_);
+            if (eval_conds(rec.get())) {
+                return;
+            }
+            scan_->next();
+        }
+        rid_ = {-1, -1};
     }
 
     /**
@@ -67,8 +94,56 @@ class SeqScanExecutor : public AbstractExecutor {
      * @return std::unique_ptr<RmRecord>
      */
     std::unique_ptr<RmRecord> Next() override {
-        return nullptr;
+        if (rid_.page_no == INVALID_PAGE_ID) {
+            return nullptr;
+        }
+        return fh_->get_record(rid_, context_);
     }
 
     Rid &rid() override { return rid_; }
+
+    bool eval_conds(const RmRecord* rec) {
+        for (auto &cond : fed_conds_) {
+
+            auto col_meta = *sm_manager_->db_
+                                .get_table(tab_name_)
+                                .get_col(cond.lhs_col.col_name);
+
+            char* lhs = rec->data + col_meta.offset;
+            
+            bool match;
+
+            if (cond.is_rhs_val) {
+                char* rhs = cond.rhs_val.raw->data;
+                int rhs_len = (col_meta.type == TYPE_STRING) ? cond.rhs_val.str_val.size() : col_meta.len;
+                match = compare(
+                    lhs,
+                    rhs,
+                    col_meta.type,
+                    cond.op,
+                    col_meta.len,
+                    rhs_len
+                );
+            } else {
+                auto r_meta =
+                    *sm_manager_->db_
+                        .get_table(tab_name_)
+                        .get_col(cond.rhs_col.col_name);
+                char* rhs = rec->data + r_meta.offset;
+                match = compare(
+                    lhs,
+                    rhs,
+                    col_meta.type,
+                    cond.op,
+                    col_meta.len,
+                    r_meta.len
+                );
+            }
+            if (!match) {
+                return false;
+            }
+        }
+
+        return true;
+    }
 };
